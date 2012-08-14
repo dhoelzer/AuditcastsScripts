@@ -7,7 +7,7 @@
 # redistribute this code as you see fit provided that this copyright notice remains
 # in place and intact.
 
-require 'ip_address.rb'
+require './ip_address.rb'
 require 'resolv'
 
 def usage

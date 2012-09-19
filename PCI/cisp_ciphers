@@ -1,0 +1,94 @@
+#!/usr/bin/perl
+#
+# Automated cipher testing for PCI CISP
+#
+# Copyright (C) 2005, All Rights Reserved -- Cyber-Defense.Org
+# David Hoelzer
+# http://www.cyber-defense.org
+#
+# Feel free to use this script, however you may not incorporate this
+# script into any commercial product, utility or script for which you
+# charge a fee of any kind.  You may use this script as-is to perform
+# for-profit assessments.
+#
+print "Copyright (C) 2005, All Rights Reserved -- Cyber-Defense.Org\n";
+print "David Hoelzer\n";
+print "http://www.cyber-defense.org\n";
+print "----------------------------\n";
+print "\n";
+print "This script will automatically test your SSL enabled web server(s)\n";
+print "in an effort to verify that the encryption settings are in compliant\n";
+print "with the PCI CISP requirements.\n\n";
+print "To perform the tests, the script will need to know where to contact\n";
+print "your SSL server.  If you are outside of the firewall running this test\n";
+print "then you should use the public IP address of the server.  If you are\n";
+print "running this test from within the network, you should probably enter\n";
+print "the internal IP address of the SSL enabled web server.\n\n";
+print "Which IP address should I test? ";
+$target = <>;
+$date = `date`;
+chomp($date);
+chomp($target);
+if(! $target)
+{
+  print "No host entered for testing.  Exiting.\n\n";
+  exit;
+}
+open(REPORT, ">ciphers_$target");
+print REPORT "$target\n";
+print REPORT "$date\n";
+print "Thank you.  Beginning tests on $target.\n\n";
+print "Obtaining available OpenSSL ciphers.\n";
+$cipher_types{"HIGH"} = "These ciphers use key lengths greater than 128 bits";
+$cipher_types{"MED"} = "These ciphers use key lengths of 128 bits";
+$cipher_types{"LOW"} = "These ciphers use key lengths of 56 or 64 bits but do not include export compatible ciphers";
+$cipher_types{"EXP"} = "These ciphers use key lengths of less than 64 bits and may be used without export restrictions";
+$cipher_types{"NULL"} = "These are ciphers with no encryption";
+@cipher_queries = keys(%cipher_types);
+foreach $cipher_type (@cipher_queries)
+{
+  print "Grabbing '$cipher_type' ciphers.\n";
+  print REPORT "cipher_type:$cipher_type\n";
+  print REPORT "cipher_desc:".$cipher_types{"$cipher_type"}."\n";
+
+  $command = "openssl ciphers $cipher_type";
+  open(FILE, "$command|");
+  foreach(<FILE>)
+  {
+    chomp();
+    $ciphers_supported{"$cipher_type"} .= "$_";
+  }
+  print REPORT "supports:". join(", ", split(/:/, $ciphers_supported{"$cipher_type"})) . "\n";
+  close(FILE);
+}
+
+print "Testing for supported cipher types on the server.\n";
+print REPORT "cipher_findings\n";
+foreach $cipher_type (@cipher_queries)
+{
+  foreach $cipher (split(/:/,$ciphers_supported{"$cipher_type"}))
+  {
+    $command = "openssl s_client -quiet -connect $target:443 -cipher $cipher";
+    $x=open(FILE, "echo Q | $command| ");
+    @output = <FILE>;
+    close(FILE);
+    $i = 0;
+print "$cipher\n";
+print "------------\n";
+foreach (@output)
+{
+print "$i: $_";
+$i++;
+}
+    $line = $output[0];
+    if($output[0])
+    {
+      print REPORT "$cipher:1\n";
+    }
+    else
+    {
+      print REPORT "$cipher:0\n";
+    }
+ }
+}
+close(REPORT);

@@ -1,0 +1,987 @@
+#!/usr/bin/perl
+#
+# Automatic analysis script for PCI validation
+#
+#   This script queries the user and automatically inventories available
+#   results files to produce a report on PCI compliance.
+#
+# Copyright (C) 2005, All Rights Reserved -- Cyber-Defense.Org
+# David Hoelzer
+# http://www.cyber-defense.org
+#
+# Organizations and individuals are free to use this script for self-assessment
+# purposes, however you may not use this script to perform assessments for
+# others without a prior licensing agreement with Cyber-Defense, nor may you
+# incorporate this script into any other product, utility or script for
+# This script is provided as-is and with no warantee of any kind.
+#
+&copyright;
+print "\n";
+print "In order to correctly analyze your results, the system must first\n";
+print "determine basic information flow requirements for your network.\n";
+print "Please answer the following questions:\n\n";
+print "Inbound port requirements:\n";
+print "--------------------------\n";
+print "\n";
+&information_flow();
+
+if(-e "inner_capture")
+    {
+      $score += 10;
+      &i_cap_analyze();
+    }
+    else {
+      $reports{"inbound_ports"} = "Inbound scan was not performed";
+    }
+if(-e "outer_capture")
+    {
+      $score += 10;
+      &o_cap_analyze();
+    }
+    else {
+      $reports{"outbound_ports"} = "Outbound scan was not performed";
+    }
+if(-e "e_nmap_scan")
+    {
+      $score += 10;
+      &e_nmap_analyze();
+    }
+    else {
+      $reports{"external_nmap"} = "External firewall scan was not performed";
+      $reports{"external_nmap"} .= "<p id=\"endetail\">Nothing to report</p>";
+    }
+if(-e "i_nmap_scan")
+    {
+      $score += 10;
+      &i_nmap_analyze();
+    }
+    else {
+      $reports{"internal_nmap"} = "Internal firewall scan was not performed";
+      $reports{"internal_nmap"} .= "<p id=\"indetail\">Nothing to report</p>";
+    }
+@ciphers = glob("ciphers_*");
+$num_cipher_files = @ciphers;
+if($num_cipher_files > 0)
+    {
+      $score += 10;
+      &cipher_analysis();
+    }
+    else {
+      $reports{"ciphers"} = "Cipher inventory was not performed";
+      $reports{"ciphers"} .= "<p id=\"cdetail\">Nothing to report</p>";
+    }
+if(-e "i_vuln_scan")
+    {
+      $score += 25;
+      &i_vuln_analyze();
+    }
+    else {
+      $reports{"i_vuln_scan"} = "Internal vulnerability assessment was not performed";
+      $reports{"i_vuln_scan"} .= "<p id=\"ivdetail\">Nothing to report</p>";
+    }
+if(-e "e_vuln_scan")
+    {
+      $score += 25;
+      &e_vuln_analyze();
+    }
+    else {
+      $reports{"e_vuln_scan"} = "External vulnerability assessment was not performed";
+      $reports{"e_vuln_scan"} .= "<p id=\"evdetail\">Nothing to report</p>";
+    }
+
+&HTML_Report;
+print "Report completed.  View 'pci_report.html' for the results.\n\n";
+
+sub cipher_analysis()
+{
+  $cipher_detail = "";
+  foreach(@ciphers)
+  {
+    print "Cipher file found: $_\n";
+    open(CIPHER_FILE, "$_");
+    @contents = <CIPHER_FILE>;
+    close(CIPHER_FILE);
+    $size = @contents;
+    for($i=0; $i!=$size; $i++)
+    {
+      chomp();
+      if($contents[$i] =~ /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/)
+      {
+        $ssl_host = $contents[$i];
+      }
+      if($contents[$i] =~ /cipher_type/)
+      {
+        $cipher_type = $contents[$i];
+        chomp($cipher_type);
+	$cipher_type =~ s/cipher_type:(.*$)/\1/;
+        $cipher_desc = $contents[$i+1];
+        chomp($cipher_desc);
+        $cipher_supports = $contents[$i+2];
+        chomp($cipher_supports);
+        $cipher_desc =~ s/cipher_desc:(.*$)/\1/;
+        $cipher_supports =~ s/supports:(.*$)/\1/;
+        $cipher_supports =~ s/ //g;
+        $cipher_descriptions{$cipher_type} = $cipher_desc;
+        $ciphers_supported{$cipher_type} = $cipher_supports;
+      }
+      if($contents[$i] =~ /cipher_findings/)
+      {
+        $j = $i+1;
+        for(;$j < $size; $j++)
+        {
+          $this_cipher = $contents[$j];
+          chomp($this_cipher);
+          ($cipher,$supported) = split(/:/, $this_cipher);
+          if($supported == 1){ $cipher_detail .= "<font color=#ffff05>"; }
+          $cipher_detail .= "$cipher is ". ($supported == 1 ? "" : "not ")."supported.<br>";
+          if($supported == 1){ $cipher_detail .= "</font>"; }
+          $ciphers_support_status{$cipher} = $supported;
+        }
+      }
+    }
+  }
+  print "Cipher analysis:\n";
+  foreach(keys(%ciphers_supported))
+  {
+    print "Cipher type: $_\n";
+    @ciphers = split(/,/,$ciphers_supported{$_});
+    $t = $_;
+    foreach(@ciphers)
+    {
+      if($ciphers_support_status{$_}) { $support_report{$t}++; }
+    }
+    $_ = $t;
+  }
+  foreach(keys(%support_report))
+  {
+    $reports{"ciphers"} .= "<p>$support_report{$_} $_ ciphers are supported: $cipher_descriptions{$_}.  ";
+  }
+  $this_score = 0;
+  if($support_report{"LOW"} || $support_report{"NULL"} || $support_report{"EXP"})
+  {
+    $reports{"ciphers"} .= "<p class=\"noncom\">";
+    $reports{"ciphers"} .= "<font class=\"standard\">Non-compliant with section 4.1</font><br>\n";
+    $reports{"ciphers"} .= "SSL must use at least 128 bit encryption<br><br>";
+    if($support_report{"LOW"})
+    {
+        $this_score += 5;
+        $reports{"ciphers"} .= "LOW ciphers are not in compliance with the standard.  \n" ;
+    }
+    if($support_report{"NULL"})
+    {
+        $this_score += 5;
+        $reports{"ciphers"} .= "NULL ciphers are not in compliance with the standard.  \n";
+    }
+    if($support_report{"EXP"})
+    {
+        $this_score += 5;
+        $reports{"ciphers"} .= "EXP ciphers are not in compliance with the standard.  \n";
+    }
+    $reports{"ciphers"} .= "</p>\n";
+  }
+  else
+  {
+    $reports{"ciphers"} .= "<p class=\"com\">";
+    $reports{"ciphers"} .= "<font class=\"green\">Compliant</font></p>\n";
+  }
+  if($this_score > 10)
+  {
+    $score -= 10;
+  }
+  else
+  {
+    $score -= $this_score;
+  }
+ $reports{"ciphers"} .= "<p id=\"cdetail\"><font class=\"vuln_body\">" . $cipher_detail . "</font></p>\n";
+}
+
+sub i_vuln_analyze
+{
+  my %nessus_results;
+  my @results;
+  my $hold, $host, $protocol, $ID, $type, $issue, $item;
+
+  $vuln_score = 0;
+  $medium = $high = $serious = $critical = 0;
+  %nessus_results = &parse_nessus_file("i_vuln_scan");
+  foreach(keys(%nessus_results))
+  {
+    @results = split(/~/, $nessus_results{$_});
+    $hold = $_;
+    foreach(@results)
+    {
+      $item = $_;
+      s/Risk factor : ([a-zA-Z]*);/$1/;
+      if($1 eq "Medium")
+        {
+          $vuln_score ++;
+          $medium ++;
+          ($host, $protocol, $ID, $type, $issue) = split(/\|/, $item);
+          $issue =~ s/;/<br>/g;
+          $i_vuln_detail{$1} .= "<br><font class=\"vuln_head\">";
+          $i_vuln_detail{$1} .= "Host: $host<br>Service: $protocol<br>Type: $type<br></font>";
+          $i_vuln_detail{$1} .= "<font class=\"vuln_body\">$issue</font>\n";
+        }
+      if($1 eq "High")
+        {
+          $vuln_score += 2;
+          $high++;
+          ($host, $protocol, $ID, $type, $issue) = split(/\|/, $item);
+          $issue =~ s/;/<br>/g;
+          $i_vuln_detail{$1} .= "<br><font class=\"vuln_head\">";
+          $i_vuln_detail{$1} .= "Host: $host<br>Service: $protocol<br>Type: $type<br></font>";
+          $i_vuln_detail{$1} .= "<font class=\"vuln_body\">$issue</font>\n";
+        }
+      if($1 eq "Serious")
+        {
+          $vuln_score += 3;
+          $serious++;
+          ($host, $protocol, $ID, $type, $issue) = split(/\|/, $item);
+          $issue =~ s/;/<br>/g;
+          $i_vuln_detail{$1} .= "<br><font class=\"vuln_head\">";
+          $i_vuln_detail{$1} .= "Host: $host<br>Service: $protocol<br>Type: $type<br></font>";
+          $i_vuln_detail{$1} .= "<font class=\"vuln_body\">$issue</font>\n";
+        }
+      if($1 eq "Critical")
+        {
+          $vuln_score += 4;
+          $critical++;
+          ($host, $protocol, $ID, $type, $issue) = split(/\|/, $item);
+          $issue =~ s/;/<br>/g;
+          $i_vuln_detail{$1} .= "<br><font class=\"vuln_head\">";
+          $i_vuln_detail{$1} .= "Host: $host<br>Service: $protocol<br>Type: $type<br></font>";
+          $i_vuln_detail{$1} .= "<font class=\"vuln_body\">$issue</font>\n";
+        }
+    }
+    $_ = $hold;
+  }
+  $reports{"i_vuln_scan"} = "The total internal vulnerability score was $vuln_score out of a maximum of 25.  There were $medium medium issues, $high high issues, $serious serious issues and $critical critical issues.";
+  if($vuln_score > 0)
+  {
+    $reports{"i_vuln_scan"} .= "<p class=\"noncom\">";
+    $reports{"i_vuln_scan"} .= "<font class=\"standard\">Non-compliant with section 11.2</font><br>";
+    $reports{"i_vuln_scan"} .= "All vulnerabilities classed Medium and higher must be remediated.<br><br>";
+    $reports{"i_vuln_scan"} .= "Medium: $medium<br>High: $high<br>Serious: $serious<br>Critical: $critical</p>\n";
+    $reports{"i_vuln_scan"} .= "<p id=\"ivdetail\">";
+    foreach(keys(%i_vuln_detail))
+    {
+      $reports{"i_vuln_scan"} .= $i_vuln_detail{$_};
+    }
+    $reports{"i_vuln_scan"} .= "</p>"
+  }
+  else
+  {
+    $reports{"i_vuln_scan"} .= "<p class=\"com\">";
+    $reports{"i_vuln_scan"} .= "<font class=\"green\">Compliant</font></p>\n";
+    $reports{"i_vuln_scan"} .= "<p id=\"ivdetail\">Nothing to report</p>";
+  }
+  if($vuln_score > 25) { $vuln_score = 25; }
+  $score -= $vuln_score;
+}
+
+sub e_vuln_analyze
+{
+  my %nessus_results;
+  my @results;
+  my $hold, $host, $protocol, $ID, $type, $issue, $item;
+
+  $vuln_score = 0;
+  $medium = $high = $serious = $critical = 0;
+  %nessus_results = &parse_nessus_file("e_vuln_scan");
+  foreach(keys(%nessus_results))
+  {
+    @results = split(/~/, $nessus_results{$_});
+    $hold = $_;
+    foreach(@results)
+    {
+      $item = $_;
+      s/Risk factor : ([a-zA-Z]*);/$1/;
+      if($1 eq "Medium")
+        {
+          $vuln_score ++;
+          $medium ++;
+          ($host, $protocol, $ID, $type, $issue) = split(/\|/, $item);
+          $issue =~ s/;/<br>/g;
+          $e_vuln_detail{$1} .= "<br><font class=\"vuln_head\">";
+          $e_vuln_detail{$1} .= "Host: $host<br>Service: $protocol<br>Type: $type<br></font>";
+          $e_vuln_detail{$1} .= "<font class=\"vuln_body\">$issue</font>\n";
+        }
+      if($1 eq "High")
+        {
+          $vuln_score += 2;
+          $high++;
+          ($host, $protocol, $ID, $type, $issue) = split(/\|/, $item);
+          $issue =~ s/;/<br>/g;
+          $e_vuln_detail{$1} .= "<br><font class=\"vuln_head\">";
+          $e_vuln_detail{$1} .= "Host: $host<br>Service: $protocol<br>Type: $type<br></font>";
+          $e_vuln_detail{$1} .= "<font class=\"vuln_body\">$issue</font>\n";
+        }
+      if($1 eq "Serious")
+        {
+          $vuln_score += 3;
+          $serious++;
+          ($host, $protocol, $ID, $type, $issue) = split(/\|/, $item);
+          $issue =~ s/;/<br>/g;
+          $e_vuln_detail{$1} .= "<br><font class=\"vuln_head\">";
+          $e_vuln_detail{$1} .= "Host: $host<br>Service: $protocol<br>Type: $type<br></font>";
+          $e_vuln_detail{$1} .= "<font class=\"vuln_body\">$issue</font>\n";
+        }
+      if($1 eq "Critical")
+        {
+          $vuln_score += 4;
+          $critical++;
+          ($host, $protocol, $ID, $type, $issue) = split(/\|/, $item);
+          $issue =~ s/;/<br>/g;
+          $e_vuln_detail{$1} .= "<br><font class=\"vuln_head\">";
+          $e_vuln_detail{$1} .= "Host: $host<br>Service: $protocol<br>Type: $type<br></font>";
+          $e_vuln_detail{$1} .= "<font class=\"vuln_body\">$issue</font>\n";
+        }
+    }
+    $_ = $hold;
+  }
+  $reports{"e_vuln_scan"} = "The total external vulnerability score was $vuln_score out of a maximum of 25.  There were $medium medium issues, $high high issues, $serious serious issues and $critical critical issues.";
+  if($vuln_score > 0)
+  {
+    $reports{"e_vuln_scan"} .= "<p class=\"noncom\">";
+    $reports{"e_vuln_scan"} .= "<font class=\"standard\">Non-compliant with section 11.2</font><br>";
+    $reports{"e_vuln_scan"} .= "All vulnerabilities classed Medium and higher must be remediated.<br><br>";
+    $reports{"e_vuln_scan"} .= "Medium: $medium<br>High: $high<br>Serious: $serious<br>Critical: $critical</p>\n";
+    $reports{"e_vuln_scan"} .= "<p id=\"evdetail\">";
+    foreach(keys(%e_vuln_detail))
+    {
+      $reports{"e_vuln_scan"} .= $e_vuln_detail{$_};
+    }
+    $reports{"e_vuln_scan"} .= "</p>"
+  }
+  else
+  {
+    $reports{"i_vuln_scan"} .= "<p class=\"com\">";
+    $reports{"i_vuln_scan"} .= "<font class=\"green\">Compliant</font></p>\n";
+    $reports{"i_vuln_scan"} .= "<p id=\"evdetail\">Nothing to report</p>";
+  }
+  if($vuln_score > 25) { $vuln_score = 25; }
+  $score -= $vuln_score;
+}
+
+sub parse_nessus_file
+{
+  my %nessus_results;
+  $nessus_file = $_[0];
+  print "Parsing $nessus_file\n";
+  open(FILE, $nessus_file);
+  foreach(<FILE>)
+  {
+    @results = split(/\|/);
+    $nessus_results{"$results[3]"} .= $_."~";
+  }
+  close(FILE);
+  return %nessus_results;
+}
+
+sub i_nmap_analyze
+{
+  %results = &parse_nmap_file("i_nmap_scan");
+  foreach(keys(%results))
+  {
+    @ports = split(/,/,$results{$_});
+  }
+  $open_ports = 0;
+  foreach(@ports)
+  {
+    if( /.*open.*/ )
+    {
+      ($port, $junk) = split(/\//);
+      $port =~ s/[^0-9]//g;
+      if(! $req_ports_only{"$port"}) { $open_ports++; $i_nmap_ports{$port} ++;}
+    }
+  }    
+  $reports{"internal_nmap"} = "$open_ports undocumented ports discovered on firewall.";
+  if($open_ports > 0)
+  {
+    $reports{"internal_nmap"} .= "<p class=\"noncom\">";
+    $reports{"internal_nmap"} .= "<font class=\"standard\">Non-compliant with sections 1.1.5, 1.1.6, 1.1.7, 1.2, 1.3.2, 1.3.8</font><br>";
+    $reports{"internal_nmap"} .= "All ports open on a firewall must be thoroughly documented and controlled.<br><br>";
+    $reports{"internal_nmap"} .= "$open_ports undocumented ports detected on the internal firewall interface.</p>\n";
+    $reports{"internal_nmap"} .= "<p id=\"indetail\">The following undocumented open ports were detected:<br><br>\n";
+    foreach(keys(%i_nmap_ports))
+    {
+      $reports{"internal_nmap"} .= $_."<br>";
+    }
+    $reports{"internal_nmap"} .= "</p>"
+  }
+  else
+  {
+    $reports{"internal_nmap"} .= "<p class=\"com\">";
+    $reports{"internal_nmap"} .= "<font class=\"green\">Compliant</font></p>\n";
+    $reports{"internal_nmap"} .= "<p id=\"indetail\">Nothing to report</p>";
+  }
+  if($open_ports > 10) { $open_ports = 10; }
+  $score -= $open_ports;
+}
+
+sub e_nmap_analyze
+{
+  %results = &parse_nmap_file("e_nmap_scan");
+  foreach(keys(%results))
+  {
+    @ports = split(/,/,$results{$_});
+  }
+  $open_ports = 0;
+  foreach(@ports)
+  {
+    if( /.*open.*/ )
+    {
+      ($port, $junk) = split(/\//);
+      $port =~ s/[^0-9]//g;
+      if(! $req_ports_only{"$port"}) { $open_ports++; $e_nmap_ports{$port} ++;}
+    }
+  }    
+  $reports{"external_nmap"} = "$open_ports undocumented ports discovered on firewall.";
+  if($open_ports > 0)
+  {
+    $reports{"external_nmap"} .= "<p class=\"noncom\">";
+    $reports{"external_nmap"} .= "<font class=\"standard\">Non-compliant with sections 1.1.5, 1.1.6, 1.1.7, 1.2, 1.3.2, 1.3.8</font><br>";
+    $reports{"external_nmap"} .= "All ports open on a firewall must be thoroughly documented and controlled.<br><br>";
+    $reports{"external_nmap"} .= "$open_ports undocumented ports detected on the internal firewall interface.</p>\n";
+    $reports{"external_nmap"} .= "<p id=\"endetail\">The following undocumented open ports were detected:<br><br>\n";
+    foreach(keys(%e_nmap_ports))
+    {
+      $reports{"external_nmap"} .= $_."<br>";
+    }
+    $reports{"external_nmap"} .= "</p>"
+  }
+  else
+  {
+    $reports{"external_nmap"} .= "<p class=\"com\">";
+    $reports{"external_nmap"} .= "<font class=\"green\">Compliant</font></p>\n";
+    $reports{"external_nmap"} .= "<p id=\"endetail\">Nothing to report</p>";
+  }
+  if($open_ports > 10) { $open_ports = 10; }
+  $score -= $open_ports;
+}
+
+sub parse_nmap_file
+{
+  $file = $_[0];
+  open(NMAP, "$file");
+  @contents = <NMAP>;
+  foreach(@contents)
+  {
+    if( /^#.*/ ) { ; }
+    else
+    {
+      /Host: (.*)Ports: (.*)Ignor.*/ ;
+      $hosts{$1} = $2;
+    }
+  }
+  close(NMAP);
+  return %hosts;
+}
+
+  
+sub information_flow
+{
+	$any_ports = &yorn("Are there any documented ports that should be open on the firewall?",
+		"yn", "n");
+	if($any_ports eq "y")
+	{
+		$any_ports = &yorn("Are there ports that should be open on the inside of the firewall?",
+			"yn", "n");
+		$more_ports = $any_ports;
+		$num_ports = 0;
+		while($more_ports eq "y")
+		{
+			$port = 0;
+			while( ! $port)
+			{
+				print "Please enter the port number: ";
+				$answer = <>;
+				$port = $answer / 1;
+			}
+			$fw_internal_ports{$port} = 1;
+		      $num_ports++;
+		      $more_ports = &yorn("Are there more required ports?",
+		        "yn", "n");
+		}
+		print "Added $num_ports permitted inbound ports on the inside of the firewall.\n";
+		$any_ports = &yorn("Are there ports that should be open on the outside of the firewall?",
+			"yn", "n");
+		$more_ports = $any_ports;
+		$num_ports = 0;
+		while($more_ports eq "y")
+		{
+			$port = 0;
+			while( ! $port)
+			{
+				print "Please enter the port number: ";
+				$answer = <>;
+				$port = $answer / 1;
+			}
+			$fw_external_ports{$port} = 1;
+		      $num_ports++;
+		      $more_ports = &yorn("Are there more required ports?",
+		        "yn", "n");
+		}
+		print "Added $num_ports permitted inbound ports on the outside of the firewall.\n";
+	}
+    $any_ports = &yorn("Does your infrastructure require any inbound ports?",
+	   "yn", "y");
+    $more_ports = $any_ports;
+    $num_ports = 0;
+    while($more_ports eq "y")
+    {
+      $protocol = &yorn("To enter a required port, you must first specify the\n".
+        "protocol type.  Is this port a TCP or a UDP port? ", "tu", "t");
+      if($protocol eq "t") { $aprotocol="tcp"; } else { $aprotocol = "udp"; }
+      print "$aprotocol selected.  ";
+      $port = 0;
+      while( ! $port)
+      {
+        print "Please enter the inbound port number: ";
+        $answer = <>;
+        $port = $answer / 1;
+      }
+      print "$aprotocol/$port added.\n";
+      $iport_filters[$num_ports] = "($aprotocol and dst port $port)";
+      $ireq_ports{"$aprotocol:$port"} = 1;
+      $ireq_ports_only{"$port"} = 1;
+      $num_ports++;
+ #Gather ports, protocols and addresses
+      $more_ports = &yorn("Does your infrastructure require more inbound ports?",
+        "yn", "n");
+    }
+    $inbound_filter = "not ( ";
+    $and = 0;
+    foreach(@iport_filters)
+    {
+        if($and == 1) { $inbound_filter .= " or "; }
+        $inbound_filter .= $_;
+        $and = 1;
+    }
+    $inbound_filter .= " )";
+
+
+    $any_ports = &yorn("Does your infrastructure require any outbound ports?",
+	   "yn", "y");
+    $more_ports = $any_ports;
+    $num_ports = 0;
+    while($more_ports eq "y")
+    {
+      $protocol = &yorn("To enter a required port, you must first specify the\n".
+        "protocol type.  Is this port a TCP or a UDP port? ", "tu", "t");
+      if($protocol eq "t") { $aprotocol="tcp"; } else { $aprotocol = "udp"; }
+      print "$aprotocol selected.  ";
+      $port = 0;
+      while( ! $port)
+      {
+        print "Please enter the outbound port number: ";
+        $answer = <>;
+        $port = $answer / 1;
+      }
+      print "$aprotocol/$port added.\n";
+      $oport_filters[$num_ports] = "($aprotocol and dst port $port)";
+      $oreq_ports{"$aprotocol:$port"} = 1;
+      $oreq_ports_only{"$port"} = 1;
+      $num_ports++;
+ #Gather ports, protocols and addresses
+      $more_ports = &yorn("Does your infrastructure require more outbound ports?",
+        "yn", "n");
+    }
+
+    $outbound_filter = "not ( ";
+    $and = 0;
+    foreach(@oport_filters)
+    {
+        if($and == 1) { $outbound_filter .= " or "; }
+        $outbound_filter .= $_;
+        $and = 1;
+    }
+    $outbound_filter .= " )";
+}
+
+sub o_cap_analyze
+{
+    my %dports;  my %tdports; my %udports; my $ports, my $local_filter,
+    my @tdports, my @udports;
+
+#assume quickmode
+    $quickmode = 1;
+    if(-e "e_scan_settings")
+    {
+        open(SETTINGS, "e_scan_settings");
+        @settings = <SETTINGS>;
+        close(SETTINGS);
+        $quick = $settings[3];
+        chomp($quick);
+        if($quick ne "y") { $quickmode = 0; }
+    }
+# Process TCP
+    $local_filter = $outbound_filter;
+    if($local_filter ne "")
+    {
+      $local_filter = "tcp and ($local_filter)";
+    }
+    else
+    {
+      $local_filter = "tcp";
+    }
+    open(PACKETS, "tcpdump -r outer_capture -n '$local_filter'|");
+
+    foreach(<PACKETS>)
+    {
+        ($time, $proto, $source, $dir, $dest, $the_rest) = split(/ /);
+        ($a,$b,$c,$d,$p) = split(/\./, $dest);
+        $dest = "$a.$b.$c.$d";
+        $dport = $p;
+        $dport =~ s/://g;
+        ($a,$b,$c,$d,$p) = split(/\./, $source);
+        $source = "$a.$b.$c.$d";
+        $sport = $p;
+        $tdports{$dport}++;
+    }
+    close(PACKETS);
+    $tports = keys(%tdports);
+    $reports{"outbound_ports"} = "$tports unnecessary TCP ports were permitted outbound.";
+# Process UDP
+    $local_filter = $outbound_filter;
+    if($local_filter ne "")
+    {
+      $local_filter = "udp and ($local_filter)";
+    }
+    else
+    {
+      $local_filter = "udp";
+    }
+    open(PACKETS, "tcpdump -r outer_capture -n '$local_filter'|");
+
+    foreach(<PACKETS>)
+    {
+        ($time, $proto, $source, $dir, $dest, $the_rest) = split(/ /);
+        ($a,$b,$c,$d,$p) = split(/\./, $dest);
+        $dest = "$a.$b.$c.$d";
+        $dport = $p;
+        $dport =~ s/://g;
+        ($a,$b,$c,$d,$p) = split(/\./, $source);
+        $source = "$a.$b.$c.$d";
+        $sport = $p;
+        $udports{$dport}++;
+    }
+    close(PACKETS);
+    $uports = keys(%udports);
+    $reports{"outbound_ports"} .= "$uports unnecessary UDP ports were permitted outbound.";
+    $open_ports = $uports + $tports;
+    if($quickmode)
+    {
+        $reports{"outbound_ports"} .= " -- WARNING:  Quickmode was assumed or selected, so these results may not be accurate!";
+    }
+  if($open_ports > 0)
+  {
+    $reports{"outbound_ports"} .= "<p class=\"noncom\">";
+    $reports{"outbound_ports"} .= "<font class=\"standard\">Non-compliant with sections 1.1.5, 1.1.6, 1.1.7, 1.2, 1.3.2, 1.3.6, 2.2.2, 1.3.8</font><br>\n";
+    $reports{"outbound_ports"} .= "All ports open through the perimeter must be thoroughly documented and controlled.<br><br>\n";
+    $reports{"outbound_ports"} .= "$open_ports undocumented outbound ports detected through the firewall.</p>\n";
+    $reports{"outbound_ports"} .= "<p id=\"opdetail\">The following undocumented open ports were detected:<br><br>\n";
+    $reports{"outbound_ports"} .= "<font class=\"vuln_head\">UDP Ports</font><br>\n<font class=\"vuln_body\">\n";
+    @udports = keys(%udports);
+    foreach(sort {$a <=> $b} @udports)
+    {
+      $reports{"outbound_ports"} .= $_."<br>\n";
+    }
+    $reports{"outbound_ports"} .= "</font>";
+    $reports{"outbound_ports"} .= "<br><font class=\"vuln_head\">TCP Ports</font><br>\n<font class=\"vuln_body\">\n";
+    @tdports = keys(%tdports);
+    foreach(sort {$a <=> $b} @tdports)
+    {
+      $reports{"outbound_ports"} .= $_."<br>\n";
+    }
+    $reports{"outbound_ports"} .= "</font>\n";
+    $reports{"outbound_ports"} .= "</p>\n"
+  }
+  else
+  {
+    $reports{"outbound_ports"} .= "<p class=\"com\">";
+    $reports{"outbound_ports"} .= "<font class=\"green\">Compliant</font></p>\n";
+    $reports{"outbound_ports"} .= "<p id=\"opdetail\">Nothing to report</p>";
+  }
+
+    if($ports > 10) { $ports = 10; }
+    $score = $score - $ports;
+}
+
+sub i_cap_analyze
+{
+    my %dports;  my %tdports; my %udports; my $ports, my $local_filter,
+    my @tdports, my @udports;
+#assume quickmode
+    $quickmode = 1;
+    if(-e "i_scan_settings")
+    {
+      open(SETTINGS, "i_scan_settings");
+      @settings = <SETTINGS>;
+      close(SETTINGS);
+      $quick = $settings[3];
+      chomp($quick);
+      if($quick ne "y") { $quickmode = 0; }
+    }
+# Process TCP
+    $local_filter = $inbound_filter;
+    if($local_filter ne "")
+    {
+      $local_filter = "tcp and ($local_filter)";
+    }
+    else
+    {
+      $local_filter = "tcp";
+    }
+    open(PACKETS, "tcpdump -r inner_capture -n '$local_filter'|");
+
+    foreach(<PACKETS>)
+    {
+        ($time, $proto, $source, $dir, $dest, $the_rest) = split(/ /);
+        ($a,$b,$c,$d,$p) = split(/\./, $dest);
+        $dest = "$a.$b.$c.$d";
+        $dport = $p;
+        $dport =~ s/://g;
+        ($a,$b,$c,$d,$p) = split(/\./, $source);
+        $source = "$a.$b.$c.$d";
+        $sport = $p;
+        $tdports{$dport}++;
+    }
+    close(PACKETS);
+    $tports = keys(%tdports);
+    $reports{"inbound_ports"} = "$tports unnecessary TCP ports were permitted inbound.";
+# Process UDP
+    $local_filter = $inbound_filter;
+    if($local_filter ne "")
+    {
+      $local_filter = "udp and ($local_filter)";
+    }
+    else
+    {
+      $local_filter = "udp";
+    }
+    open(PACKETS, "tcpdump -r inner_capture -n '$local_filter'|");
+
+    foreach(<PACKETS>)
+    {
+        ($time, $proto, $source, $dir, $dest, $the_rest) = split(/ /);
+        ($a,$b,$c,$d,$p) = split(/\./, $dest);
+        $dest = "$a.$b.$c.$d";
+        $dport = $p;
+        $dport =~ s/://g;
+        ($a,$b,$c,$d,$p) = split(/\./, $source);
+        $source = "$a.$b.$c.$d";
+        $sport = $p;
+        $udports{$dport}++;
+    }
+    close(PACKETS);
+    $uports = keys(%udports);
+    $reports{"inbound_ports"} .= "$uports unnecessary UDP ports were permitted inbound.";
+    $open_ports = $uports + $tports;
+    if($quickmode)
+    {
+        $reports{"inbound_ports"} .= " -- WARNING:  Quickmode was assumed or selected, so these results may not be accurate!";
+    }
+  if($open_ports > 0)
+  {
+    $reports{"inbound_ports"} .= "<p class=\"noncom\">";
+    $reports{"inbound_ports"} .= "<font class=\"standard\">Non-compliant with sections 1.1.5, 1.1.6, 1.1.7, 1.2, 1.3.2, 1.3.6, 2.2.2, 1.3.8</font><br>\n";
+    $reports{"inbound_ports"} .= "All ports open inbound must be thoroughly documented and controlled.<br><br>\n";
+    $reports{"inbound_ports"} .= "$open_ports undocumented inbound ports detected through the firewall.</p>\n";
+    $reports{"inbound_ports"} .= "<p id=\"ipdetail\">The following undocumented open ports were detected:<br><br>\n";
+    $reports{"inbound_ports"} .= "<font class=\"vuln_head\">UDP Ports</font><br>\n<font class=\"vuln_body\">\n";
+    @udports = keys(%udports);
+    foreach(sort {$a <=> $b} @udports)
+    {
+      $reports{"inbound_ports"} .= $_."<br>\n";
+    }
+    $reports{"inbound_ports"} .= "</font>";
+    $reports{"inbound_ports"} .= "<br><font class=\"vuln_head\">TCP Ports</font><br>\n<font class=\"vuln_body\">\n";
+    @tdports = keys(%tdports);
+    foreach(sort {$a <=> $b} @tdports)
+    {
+      $reports{"inbound_ports"} .= $_."<br>\n";
+    }
+    $reports{"inbound_ports"} .= "</font>";
+    $reports{"inbound_ports"} .= "</p>\n"
+  }
+  else
+  {
+    $reports{"inbound_ports"} .= "<p class=\"com\">";
+    $reports{"inbound_ports"} .= "<font class=\"green\">Compliant</font></p>\n";
+    $reports{"inbound_ports"} .= "<p id=\"ipdetail\">Nothing to report</p>";
+  }
+}
+
+sub yorn
+{
+  my(%is_opt, $answer, $query, $args, $default, @args);
+  ($query, $args, $default) = @_;
+  @args = split(//, $args);
+  foreach(@args)
+  {
+    $is_opt{$_} = 1;
+    if($_ eq $default) { $_ =~ tr/a-z/A-Z/; }
+  }
+  $args = join('/', @args);
+  while(!$is_opt{$answer})
+  {
+    print "$query [$args]";
+    $answer = <>;
+    chomp($answer);
+    $answer =~ tr/A-Z/a-z/;
+    if($answer eq "") { $answer = $default; }
+  }
+  return $answer;
+}
+
+sub HTML_Report
+{
+    open(FILE, ">pci_report.html");
+    if($score < 100)
+    {
+      $Compliant = "<h3><font color=#ff1010>Non-Compliant</font></h3>";
+    }
+    else
+    {
+      $Compliant = "<h3><font color=#10ff10>Compliant</font></h3>";
+    }
+    print FILE <<END_HTML;
+<html>
+<head>
+<title>PCI Validation Tool</title>
+<script language="JavaScript">
+    function ToggleDetails(me)
+    {
+        var element = document.getElementById("cdetail").style;
+        element.display = element.display ? "" : "block";
+        var evelement = document.getElementById("evdetail").style;
+        evelement.display = evelement.display ? "" : "block";
+        var ivelement = document.getElementById("ivdetail").style;
+        ivelement.display = ivelement.display ? "" : "block";
+        var enelement = document.getElementById("endetail").style;
+        enelement.display = enelement.display ? "" : "block";
+        var inelement = document.getElementById("indetail").style;
+        inelement.display = inelement.display ? "" : "block";
+        var opelement = document.getElementById("opdetail").style;
+        opelement.display = opelement.display ? "" : "block";
+        var ipelement = document.getElementById("ipdetail").style;
+        ipelement.display = ipelement.display ? "" : "block";
+    }
+</script>
+<style type="text/css">
+body {
+  background:#a0a0a0;
+}
+div.left {
+  background:#ffffff;
+  float:left;
+  border-style:solid;
+  width:15%;
+  height:100%;
+  padding: 1%;
+  margin-right: 1em;
+}
+p.noncom {
+  border-style:double;
+  padding: 2%;
+  width: 70%;
+  background:#ffffff;
+}
+p#cdetail {
+  font-family:courier;
+  font-size:90%;
+  display:none;
+}
+p#evdetail {
+  font-family:courier;
+  font-size:90%;
+  display:none;
+}
+p#ivdetail {
+  font-family:courier;
+  font-size:90%;
+  display:none;
+}
+p#indetail {
+  font-family:courier;
+  font-size:90%;
+  display:none;
+}
+p#endetail {
+  font-family:courier;
+  font-size:90%;
+  display:none;
+}
+p#opdetail {
+  font-family:courier;
+  font-size:90%;
+  display:none;
+}
+p#ipdetail {
+  font-family:courier;
+  font-size:90%;
+  display:none;
+}
+div.header {
+  background:#ffffff;
+  font-size: 200%;
+  float:top;
+  border-style:solid;
+  padding=10%;
+  margin-bottom: 1%;
+  text-align:center;
+  text-transform:capitalize;
+  first-letter-size: 125%;
+  }
+div.body {
+  float:left;
+  width:75%;
+
+}
+div.section {
+  padding:1%;
+}
+font.vuln_head {
+  font-size:115%;
+  font-weight:bold;
+  font-family:helvetica;
+}
+font.vuln_body {
+  font-size:80%;
+  font-family:courier;
+}
+font.standard {
+  color:#ff1010;
+  font-size:115%;
+  font-weight:bold;
+  font-family:garamond;
+}
+</style>
+<body>
+<div class="header">Cyber-Defense PCI Scoring Tool</div>
+<div class="left">
+<h2>Report Sections</h2>
+<h3>Overall Score: $score</h3>
+$Compliant
+<h4><a href="javascript:ToggleDetails('cdetail');">Toggle details</a></h4>
+</div>
+<div class="body">
+END_HTML
+print FILE "\n<div class='section'><h3>Outbound Scan</h3>".$reports{"outbound_ports"}."<hr></div>";
+print FILE "\n<div class='section'><h3>Inbound Scan</h3>".$reports{"inbound_ports"}."<hr></div>";
+print FILE "\n<div class='section'><h3>SSL Cipher Validation</h3>".$reports{"ciphers"}."<hr></div>";
+print FILE "\n<div class='section'><h3>Internal Vulnerability Scan</h3>".$reports{"i_vuln_scan"}."<hr></div>";
+print FILE "\n<div class='section'><h3>External Vulnerability Scan</h3>".$reports{"e_vuln_scan"}."<hr></div>";
+print FILE "\n<div class='section'><h3>Internal Firewall Scan</h3>".$reports{"internal_nmap"}."<hr></div>";
+print FILE "\n<div class='section'><h3>External Firewall Scan</h3>".$reports{"external_nmap"}."<hr></div>";
+print FILE "\n</div>";
+}
+
+sub copyright
+{
+  print "Copyright (C) 2005,2009 All Rights Reserved -- Cyber-Defense.Org\n";
+  print "David Hoelzer\n";
+  print "http://www.cyber-defense.org\n";
+  print "----------------------------\n";
+}

@@ -1,0 +1,54 @@
+#!/bin/sh
+#
+#  The sniffer only collects packets with an ID of 444
+#  to match what the scanner fires.
+#
+#  Testing in a proxy environment is not currently supported since these
+#  environments tend not to reflect these settings in proxied packets
+#
+# Copyright (C) 2005, All Rights Reserved -- Cyber-Defense.Org
+# David Hoelzer
+# http://www.cyber-defense.org
+#
+# Feel free to use this script, however you may not incorporate this
+# script into any commercial product, utility or script for which you
+# charge a fee of any kind.  You may use this script as-is to perform
+# for-profit assessments.
+#
+
+echo 'Copyright (C) 2005, All Rights Reserved -- Cyber-Defense.Org'
+echo 'David Hoelzer'
+echo 'http://www.cyber-defense.org'
+echo '----------------------------'
+echo 'PCI CISP Sniffer driver'
+echo
+
+done=false
+while [ $done = false ]; do
+echo -n "Is this the internal sniffer or the external sniffer? [I/E] "
+read INEXT
+if [ $INEXT = 'i' ] || [ $INEXT == 'I' ]; then
+	done=true
+	type=internal
+	filename=inner_capture
+	directory=`pwd`
+fi
+if [ $INEXT = e ] || [ $INEXT = E ]; then
+	done=true
+	type=internal
+	filename=outer_capture
+	directory=`pwd`
+fi
+done
+echo -n "Which interface should I listen on? [eth0] "
+read INTERFACE
+if [ ! $INTERFACE ]; then
+	INTERFACE=eth0
+fi
+
+echo
+echo "Starting sniffer on $INTERFACE.  The log will be stored in"
+echo "$directory as $filename"
+echo "When the scan has been completed, hit control-C to terminate."
+echo -------------------------
+tcpdump -w $filename -i $INTERFACE ip[4:2]=444

@@ -1,0 +1,239 @@
+#!/usr/bin/perl
+#
+# Automatic scanning script for PCI CISP validation
+#
+#  The sniffer only collects packets with an ID of 444
+#  to match what the scanner fires.
+#
+#  Testing in a proxy environment is not currently supported since these
+#  environments tend not to reflect these settings in proxied packets
+#
+# Copyright (C) 2005, All Rights Reserved -- Cyber-Defense.Org
+# David Hoelzer
+# http://www.cyber-defense.org
+#
+# Feel free to use this script, however you may not incorporate this
+# script into any commercial product, utility or script for which you
+# charge a fee of any kind.  You may use this script as-is to perform
+# for-profit assessments.
+#
+print "Copyright (C) 2005, All Rights Reserved -- Cyber-Defense.Org\n";
+print "David Hoelzer\n";
+print "http://www.cyber-defense.org\n";
+print "----------------------------\n";
+print "\n";
+$reduced_top_port = 80;
+$top_port = 65536;
+$real_source = "5.1.1.1";
+print "The scanner will normally probe all possible ports on the destination\n";
+print "network.  If you would like to run in 'quick' mode for testing\n";
+print "purposes, the scanner will only probe the first $reduced_top_port ports, thus\n";
+print "running approximately 60 times faster.\n\n";
+$quick = &yorn("Run in quick mode?", "yn", "n");
+if($quick eq "y") { $top_port = $reduced_top_port; }
+print "\nThe scanner needs information about the target network or systems.\n";
+print"If you are scanning from inside to outside, any external address will\n";
+print "do as a target, but we recommend you choose something that is\n";
+print "unallocated or blocked at your edge router to prevent the packets\n";
+print "from hitting another party.  If you are scanning inbound, the target\n";
+print "should be a real host IP address behind the firewall.\n\n";
+print "Enter a target address: ";
+$target = <>;
+chomp($target);
+print "\nThe scanner also needs to know the address of the firewall from\n";
+print "the scanner's perspective.  In other words, if the scanner is\n";
+print "being run from the outside, you should enter the external firewall\n";
+print "address.  If the scanner is being run from inside, the internal\n";
+print "firewall address should be entered.\n\n";
+print "Enter firewall address: ";
+$firewall = <>;
+chomp($firewall);
+&get_scanner_ip;
+print "\nThe scanner needs to know if it should operate in internal or\n";
+print "external mode since the scans performed are slightly different.\n\n";
+$iore = &yorn("Operate in internal or external mode?", "ie", "i");
+if($iore eq "e")
+{
+  print"\nIn external mode, the scanner will need to know the ethernet\n";
+  print"address of the firewall.  The scanner will automatically ping\n";
+  print"the firewall in an effort to ascertain the MAC address.  It is\n";
+  print"critical that this scanner be located on the same physical segment\n";
+  print"as the firewall's external interface for this to function properly.\n\n";
+
+  $firewall_mac = &get_firewall_mac;
+  print "\n\nThe scanner must use some real public IP address for the scans\n";
+  print "from the outside.  The scanner uses 5.1.1.1 by default since this\n";
+  print "is an unallocated address.  Is this acceptable?\n\n";
+  $five = &yorn("Use 5.1.1.1 as the public address?", "yn", "y");
+  if($five eq "n")
+  {
+    print "\nPlease enter a public IP address to use as one of the packet\n";
+    print "sources during the tests.  This must not be an RFC-1918 private\n";
+    print "address.\n\n";
+    print "Enter a source IP address: ";
+    $real_source = <>;
+    chomp($real_source);
+  }
+}
+
+print "Thank you.  Please wait while the scan runs..";
+open(FILE, ">".$iore."_scan_settings");
+print FILE "$iore\n$real_source\n$target\n$quick\n$firewall";
+close(FILE);
+
+if($iore eq "e")
+{
+  print "\n\nPerforming external scan of firewall address.\n";
+
+  $scan_targets = "-M $firewall_mac -D $target";
+  for($dport=0;$dport!=$top_port;$dport++)
+  {
+    $command = "nemesis-tcp $static_ip_options $static_tcp_options -x 1025 -y $dport -S $real_source -D $firewall -fS > /dev/null";
+    system($command);
+    $command = "nemesis-tcp $static_ip_options $static_tcp_options -x 1025 -y $dport -S $real_source -D $firewall -fS -fA > /dev/null";
+    system($command);
+  }
+  print "Initial external scan completed.\n";
+}
+else
+{ 
+  print "\nSkipping external scan of firewall.\n";
+  $scan_targets = "-D $target";
+}
+
+# Standard options sent in every packet
+$sources = "$real_source, 192.168.50.32, $scanner_IP";
+$static_ip_options = "-I 444 -T 99";
+$static_tcp_options = "-a 111 -s 222 -w 333";
+
+# Source ports to fire packets from
+$source_ports = "0,20,80,1025";
+
+# All TCP packet types to send:
+$tcp_packets = "-fS, -fS -fA, -fS -fF, -f-";
+
+# Fragmentation options to send:
+$fragment_options = "-FD, -FM, -FM 1";
+
+################################################################
+#
+# We strongly recommend that you do not edit beyond this point.
+#
+################################################################
+#
+# Break apart the options:
+@tcp_opts = split(/,/, $tcp_packets);
+@sports = split(/,/, $source_ports);
+@frags = split(/,/, $fragment_options);
+@sources = split(/,/, $sources);
+# Fire some TCP Packets!
+print "Beginning fragmentation and flag scanning through firewall.\n";
+foreach $tcp_opts (@tcp_opts) {
+	foreach $frag (@frags) {
+		foreach $sport (@sports) {
+			for($dport = 0; $dport < $top_port; $dport++) {
+				foreach $source (@sources) {
+				$command = "nemesis-tcp $static_ip_options $static_tcp_options $tcp_opts $frag -x $sport -y $dport $scan_targets -S $source > /dev/null";
+				system($command);
+				}
+				}
+			}
+		}
+	print "Finished complete loop for TCP option \"$tcp_opts\".\n";
+	}
+
+print "TCP testing completed\n";
+print "Beginning ICMP sweep\n";
+for($code=0;$code<14;$code++){
+  for($type=0;$type<40;$type++){
+    foreach $frag (@frags)
+    {
+	$command = "nemesis-icmp $static_ip_options $frag $scan_targets -S $real_source -i $type -c $code > /dev/null";
+	system($command);
+    }
+  }
+}
+
+print "ICMP testing complete\n";
+print "UDP testing begins\n";
+for($dport=0;$dport<$top_port;$dport++){
+  foreach $frag (@frags)
+  {
+	$command = "nemesis-udp $static_ip_options $frag $scan_targets -S $real_source -x 53 -y $dport > /dev/null";
+	system($command);
+  }
+}
+
+print "Performing an NMap scan of the firewall, $firewall...\n";
+$command = "nmap -n -O -p 1-65535 -sT -oM ".$iore."_nmap_scan $firewall > /dev/null";
+system($command);
+print "\nScan complete!\n";
+print "\n\nProbing Completed!";
+sub usage
+{
+	print <<END
+
+Usage: scanner target_host real_source_host [quick]
+
+For experimentation and demonstration purposes, you can speed up the
+testing process by testing a subset of target ports (ports < $reduced_top_port)
+if you set the "quick" value to one.
+END
+}
+
+sub yorn
+{
+  my(%is_opt, $answer, $query, $args, $default, @args);
+  ($query, $args, $default) = @_;
+  @args = split(//, $args);
+  foreach(@args)
+  {
+    $is_opt{$_} = 1;
+    if($_ eq $default) { $_ =~ tr/a-z/A-Z/; }
+  }
+  $args = join('/', @args);
+  while(!$is_opt{$answer})
+  {
+    print "$query [$args]";
+    $answer = <>;
+    chomp($answer);
+    $answer =~ tr/A-Z/a-z/;
+    if($answer eq "") { $answer = $default; }
+  }
+  return $answer;
+}
+
+sub get_scanner_ip
+{
+  $command = "ifconfig eth0 | grep 'inet addr' |";
+  open(FILE, "$command");
+  @results = <FILE>;
+  close(FILE);
+  $scanner_IP = $results[0];
+  chomp($scanner_IP);
+  $scanner_IP =~ s/.*inet addr:([0-9.]*).*Bcast.*/\1/;
+  if(!$scanner_IP)
+  {
+    print "There was an error obtaining the eth0 IP address of the scanner.\n";
+    exit;
+  }
+}
+
+sub get_firewall_mac
+{
+  $command = "ping -c 1 $firewall > /dev/null";
+  system($command);
+  $command = "arp -an | grep $firewall | cut -d ' ' -f 4";
+  open(FILE, "$command|");
+  @results = <FILE>;
+  close(FILE);
+  $firewall_mac = $results[0];
+  chomp($firewall_mac);
+  if(!$firewall_mac)
+  {
+    print "There was an error obtaining the firewall MAC address.  Aborted.\n";
+    exit;
+  }
+  print "The MAC of the firewall is $firewall_mac";
+}
+

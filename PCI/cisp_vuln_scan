@@ -1,0 +1,50 @@
+#!/bin/sh
+#
+# Copyright (C) 2005, All Rights Reserved -- Cyber-Defense.Org
+# David Hoelzer
+# http://www.cyber-defense.org
+#
+# Feel free to use this script, however you may not incorporate this
+# script into any commercial product, utility or script for which you
+# charge a fee of any kind.  You may use this script as-is to perform
+# for-profit assessments.
+#
+
+echo 'Copyright (C) 2005, All Rights Reserved -- Cyber-Defense.Org'
+echo 'David Hoelzer'
+echo 'http://www.cyber-defense.org'
+echo '----------------------------'
+echo 'PCI CISP Automated Vulnerability Assessment'
+
+echo
+
+done=false
+while [ $done = false ]; do
+echo -n "Is this the internal or the external scanning host? [I/E] "
+read INEXT
+if [ $INEXT = 'i' ] || [ $INEXT == 'I' ]; then
+	done=true
+	type=internal
+	filename=i_vuln_scan
+	directory=`pwd`
+fi
+if [ $INEXT = e ] || [ $INEXT = E ]; then
+	done=true
+	type=internal
+	filename=e_vuln_scan
+	directory=`pwd`
+fi
+done
+echo "In order to perform the scan, you must first provide a list of IP addresses"
+echo "that represent the targets.  For an external scan please provide the external"
+echo "IP address of the firewall.  For an internal scan please provide the IP"
+echo "addresses of all of the hosts that make up your perimeter including the"
+echo "internal address of the firewall.  When you have finished, please press"
+echo "control-D.  If you make an error, please press control-C and restart this"
+echo "script."
+echo "------------------------------------------------------------------------"
+echo "(Please enter 1 address per line):"
+cat > hosts
+echo "Thank you.  The scan will now run.  Please be patient!"
+echo 0 | nessus -q 127.0.0.1 1241 pcicisp pcicisp hosts $filename > /dev/null
+echo "Scan completed."

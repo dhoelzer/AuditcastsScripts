@@ -16,13 +16,7 @@
 # This script is provided as-is and with no warantee of any kind.
 #
 &copyright;
-print "\n";
-print "In order to correctly analyze your results, the system must first\n";
-print "determine basic information flow requirements for your network.\n";
-print "Please answer the following questions:\n\n";
-print "Inbound port requirements:\n";
-print "--------------------------\n";
-print "\n";
+
 &information_flow();
 
 if(-e "inner_capture")
@@ -105,6 +99,22 @@ sub cipher_analysis()
     for($i=0; $i!=$size; $i++)
     {
       chomp();
+      if($contents[$i] =~ /^S:/)
+	{
+		$validity_starts = $contents[$i];
+		$validity_starts =~ s/^S:(.*)/\1/;
+	}
+	if($contents[$i] =~ /^E:/)
+	{
+		$validity_ends = $contents[$i];
+		$validity_ends =~ s/^E:(.*)/\1/;
+	}
+	if($contents[$i] =~ /^CC:/)
+	{
+		$temp = $contents[$i];
+		$temp =~ s/^CC:(.*)/\1/;
+		$chain = $chain . $temp;
+	}
       if($contents[$i] =~ /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/)
       {
         $ssl_host = $contents[$i];
@@ -193,6 +203,8 @@ sub cipher_analysis()
     $score -= $this_score;
   }
  $reports{"ciphers"} .= "<p id=\"cdetail\"><font class=\"vuln_body\">" . $cipher_detail . "</font></p>\n";
+ $reports{"ciphers"} .= "<p>Certificate valid from ".$validity_starts." until ".$validity_ends."</p>";
+ $reports{"ciphers"} .= "<p>Certificate Validity Chain:<UL>".$chain."</UL></p>";
 }
 
 sub i_vuln_analyze
@@ -481,6 +493,15 @@ sub parse_nmap_file
   
 sub information_flow
 {
+if(!(-e "inner_capture" || -e "outer_capture" || -e "i_nmap_scan" || -e "e_nmap_scan")) { return ; }
+
+print "\n";
+print "In order to correctly analyze your results, the system must first\n";
+print "determine basic information flow requirements for your network.\n";
+print "Please answer the following questions:\n\n";
+print "Inbound port requirements:\n";
+print "--------------------------\n";
+print "\n";
 	$any_ports = &yorn("Are there any documented ports that should be open on the firewall?",
 		"yn", "n");
 	if($any_ports eq "y")

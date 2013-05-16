@@ -31,12 +31,13 @@ chomp($date);
 chomp($target);
 if(! $target)
 {
-  print "No host entered for testing.  Exiting.\n\n";
-  exit;
+	print "No host entered for testing.  Exiting.\n\n";
+	exit;
 }
 open(REPORT, ">ciphers_$target");
 print REPORT "$target\n";
 print REPORT "$date\n";
+&validity;
 print "Thank you.  Beginning tests on $target.\n\n";
 print "Obtaining available OpenSSL ciphers.\n";
 $cipher_types{"HIGH"} = "These ciphers use key lengths greater than 128 bits";
@@ -47,48 +48,91 @@ $cipher_types{"NULL"} = "These are ciphers with no encryption";
 @cipher_queries = keys(%cipher_types);
 foreach $cipher_type (@cipher_queries)
 {
-  print "Grabbing '$cipher_type' ciphers.\n";
-  print REPORT "cipher_type:$cipher_type\n";
-  print REPORT "cipher_desc:".$cipher_types{"$cipher_type"}."\n";
+	print "Grabbing '$cipher_type' ciphers.\n";
+	print REPORT "cipher_type:$cipher_type\n";
+	print REPORT "cipher_desc:".$cipher_types{"$cipher_type"}."\n";
 
-  $command = "openssl ciphers $cipher_type";
-  open(FILE, "$command|");
-  foreach(<FILE>)
-  {
-    chomp();
-    $ciphers_supported{"$cipher_type"} .= "$_";
-  }
-  print REPORT "supports:". join(", ", split(/:/, $ciphers_supported{"$cipher_type"})) . "\n";
-  close(FILE);
+	$command = "openssl ciphers $cipher_type";
+	open(FILE, "$command|");
+	foreach(<FILE>)
+	{
+		chomp();
+		$ciphers_supported{"$cipher_type"} .= "$_";
+	}
+	print REPORT "supports:". join(", ", split(/:/, $ciphers_supported{"$cipher_type"})) . "\n";
+	close(FILE);
 }
 
 print "Testing for supported cipher types on the server.\n";
 print REPORT "cipher_findings\n";
 foreach $cipher_type (@cipher_queries)
 {
-  foreach $cipher (split(/:/,$ciphers_supported{"$cipher_type"}))
-  {
-    $command = "openssl s_client -quiet -connect $target:443 -cipher $cipher";
-    $x=open(FILE, "echo Q | $command| ");
-    @output = <FILE>;
-    close(FILE);
-    $i = 0;
-print "$cipher\n";
-print "------------\n";
-foreach (@output)
-{
-print "$i: $_";
-$i++;
+	foreach $cipher (split(/:/,$ciphers_supported{"$cipher_type"}))
+	{
+		$command = "openssl s_client -quiet -connect $target:443 -cipher $cipher";
+		$x=open(FILE, "echo Q | $command| ");
+		@output = <FILE>;
+		close(FILE);
+		$i = 0;
+		print "$cipher\n";
+		print "------------\n";
+		foreach (@output)
+		{
+			print "$i: $_";
+			$i++;
+		}
+		$line = $output[0];
+		if($output[0])
+		{
+			print REPORT "$cipher:1\n";
+		}
+		else
+		{
+			print REPORT "$cipher:0\n";
+		}
+	}
 }
-    $line = $output[0];
-    if($output[0])
-    {
-      print REPORT "$cipher:1\n";
-    }
-    else
-    {
-      print REPORT "$cipher:0\n";
-    }
- }
-}
+
 close(REPORT);
+
+
+
+sub validity
+{
+$command = "openssl s_client -connect $target:443 | openssl x509 -text";
+$x = open(FILE, "echo Q | $command|");
+@output = <FILE>;
+close(FILE);
+foreach $line (@output)
+{
+	if($line =~ /Not Before/) { $line =~ s/.*Not Before: (.*)/\1/; print REPORT "S:$line"; }
+	if($line =~ /Not After/) { $line =~ s/.*Not After : (.*)/\1/; print REPORT "E:$line"; }
+}
+
+$command = "openssl s_client -connect $target:443 -verify 20";
+$x = open(FILE, "echo Q | $command | ");
+@output = <FILE>;
+$chain_flag = 0;
+close(FILE);
+foreach $line (@output)
+{
+	if($chain_flag)
+	{
+		if($line =~ /^ [0-9]+ s:/ )
+		{
+			$line =~ s/^ [0-9]+ s:(.*)/\1/;
+			chomp($line);
+			print REPORT "CC:<LI>Signature: $line</LI>\n";
+		}
+		if($line =~ /^[ \t]+i:/)
+		{
+			$line =~ s/^[ \t]+i:(.*)/\1/;
+			chomp($line);
+			print REPORT "CC:<LI>Issued by: $line</LI>\n";
+		}
+	}
+	if($line =~ /^---/) {$chain_flag = 0; }
+	if($line =~ /^Certificate chain/) { $chain_flag = 1; }
+}
+}
+

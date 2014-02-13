@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 #  The sniffer only collects packets with an ID of 444
 #  to match what the scanner fires.
@@ -27,13 +27,13 @@ done=false
 while [ $done = false ]; do
 echo -n "Is this the internal sniffer or the external sniffer? [I/E] "
 read INEXT
-if [ $INEXT = 'i' ] || [ $INEXT == 'I' ]; then
+if [ "$INEXT" == "i" ] || [ "$INEXT" == "I" ]; then
 	done=true
 	type=internal
 	filename=inner_capture
 	directory=`pwd`
 fi
-if [ $INEXT = e ] || [ $INEXT = E ]; then
+if [ "$INEXT" == "e" ] || [ "$INEXT" == "E" ]; then
 	done=true
 	type=internal
 	filename=outer_capture

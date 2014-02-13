@@ -35,10 +35,10 @@ puts"Starting at #{a.address}, counting up to #{b.address}"
 while(a < b)
   result = resolver.getnames(a.address)
   if result.size != 0 then
-    puts "#{a.address}: "
+    print "#{a.address}:\t"
     result.each { |name| puts "\t#{name}"}
   end
   a = a + increment
   tested = tested + 1
-  puts " -> #{a.address}" if tested % 100 == 0
+#  puts " -> #{a.address}" if tested % 100 == 0
 end

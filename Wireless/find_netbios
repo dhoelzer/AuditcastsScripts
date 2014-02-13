@@ -1,0 +1,9 @@
+#!/bin/bash
+
+if [ -z $1 ] ; then
+	echo "Usage:  $0 capture_file"
+	echo
+	echo "You must provide a packet capture file as an argument!"
+	exit 1
+fi
+strings -16 $1 | sort -u | awk '/^ [A-P]+$/ {print $1}' | perl -e "`cat netbios.pl`"

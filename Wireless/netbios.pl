@@ -3,7 +3,6 @@
 @names = <STDIN>;
 for $name (@names){
 chomp($name);
-$name =~ s/[^A-P]//;
 @chars = split(//,$name);
 for($x=0;$x<32;$x+=2)
 {

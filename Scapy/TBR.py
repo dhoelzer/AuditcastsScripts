@@ -12,10 +12,7 @@ sixes =  "66666666"
 checksums = []
 possible_payloads = { }
 
-# Yes, I know that the below is incredibly inelegant, but it's an easy way to 
-# quickly see what's actually in the packet payloads without having to count
-# bytes manually when adding or analyzing.
-payload = 3*ones + 2*fours + 1*twos + 3*threes + 3*sixes
+payload = 3*ones+2*fours+1*twos+3*threes+3*sixes
 possible_payloads[payload] = "BSD"
 payload = 1*ones + 3*fours + 2*twos + 3*fives + 3*sixes
 possible_payloads[payload] = "BSD Right"
@@ -56,7 +53,7 @@ for payload in possible_payloads:
 	packet = IP(dst=target)/ICMP(type=8,code=0)/payload
         send(packet, verbose=False)
 	packet = packet.__class__(str(packet))
-	checksums.append(packet.getlayer(ICMP).chksum)
+	checksums.append((packet.getlayer(ICMP).chksum))
 
 # This is a fixup to the payload table because Google has a really
 # weird response, truncating the response.

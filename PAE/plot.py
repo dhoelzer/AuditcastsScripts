@@ -1,19 +1,33 @@
 #!/usr/bin/python
 import matplotlib.pyplot as plt
+import numpy as numpy
 import sys
 
-def plot_sorted(dictionary):
-	mykeys = sorted(dictionary.keys())
-	mydata = []
-	for key in mykeys:
-		mydata.append(dictionary[key])
-	plt.plot(mykeys,mydata,"r.")
-	plt.show()
 
-data = {}
+dictionary = {}
 inputData = sys.stdin.readlines()
 for line in inputData:
 	[count, value] =  line.split()
-	data[int(value)] = int(count)
+	dictionary[int(value)] = int(count)
 
-plot_sorted(data)
+keys = sorted(dictionary.keys())
+data = []
+for key in keys:
+	data.append(dictionary[key])
+
+ax=plt.axes()
+ax.plot(keys, data, ".")
+
+min = min(data)
+max = max(data)
+stddev = numpy.std(data)
+mean = numpy.mean(data)
+
+fudge = 2
+if(len(sys.argv) > 1):
+	fudge = int(sys.argv[1])
+
+for key in keys:
+	if (dictionary[key] >= (mean + (fudge*stddev))):
+		ax.annotate(str(key), (key, dictionary[key]), rotation=45)
+plt.show()		

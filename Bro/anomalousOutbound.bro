@@ -4,7 +4,7 @@
 global knownAddresses: set[addr] &read_expire = 7 days &synchronized;
 global internalAddresses: set[subnet] = {192.168.0.0/16};
 
-event dns_A_reply(c: connection, msg: dns_msg, a:addr)
+event dns_A_reply(c: connection, msg: dns_msg, ans: dns_answer, a:addr)
 {
 	add knownAddresses[a];
 }

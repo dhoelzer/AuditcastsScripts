@@ -27,7 +27,8 @@ fudge = 2
 if(len(sys.argv) > 1):
 	fudge = int(sys.argv[1])
 
-for key in keys:
-	if (dictionary[key] >= (mean + (fudge*stddev))):
-		ax.annotate(str(key), (key, dictionary[key]), rotation=45)
+i = 0
+for key in sorted(dictionary, key=dictionary.get, reverse=True)[:10]:
+	ax.annotate(str(key),  xy=(key, dictionary[key]), xycoords='data', xytext=(10,400-(i*20)), textcoords='figure pixels',  arrowprops=dict(color="red",  width=0.01, headwidth=4))
+	i = i + 1
 plt.show()		

@@ -1,6 +1,6 @@
 /*
  *
- *  This code is Copyright (C) 2001, David Hoelzer
+ *  This code is Copyright (C) 2001, 2018, David Hoelzer
  *  Please feel free to make modifications to this code, however,
  *  license is -not- granted for redistribution of modifications
  *  or of modified code.  License is granted for all non-commercial
@@ -23,8 +23,11 @@
  *  libpcap 0.4 (or higher) is required.
  */
 
-#define VERSION "0.4"
+#define VERSION "0.5"
 // Rev 0.1 - Initial Release
+// Rev 0.5 - Added checksum support
+//    We have developed a suspicion that there are checksums that will almost never appear
+//    and others that will be quite common.  Thought we'd add something to test this out.
 
 
 #include<stdio.h>
@@ -42,6 +45,7 @@
 #define SEQ_NUMS   32
 #define QUIET      64
 #define SRC_HOSTS  128
+#define CHECKSUM 256
 #define KEYLENGTH  32
 
 struct root_struct
@@ -76,7 +80,7 @@ pcap_dumper_t *output;
 struct bpf_program program;
 struct root_struct *root, *last;
 struct root_struct *hash_table[1048576];
-unsigned char flags;
+unsigned int flags;
 int _debug = 0;
 float anomalosity = 1;
 float median = 0;
@@ -92,7 +96,7 @@ unsigned int hash(char *key)
   unsigned int hashval;
   int x;
 
-  if(flags & (SRC_PORTS | DST_PORTS | IPIDS))
+  if(flags & (SRC_PORTS | DST_PORTS | IPIDS | CHECKSUM))
     {
       hashval = *((unsigned short int *)key);
       return (hashval);
@@ -128,12 +132,16 @@ int main(int argc, char **argv)
   significant_bytes = 32;
 
   // Get command line args
-  for(option = getopt(argc, argv, "qsdSihr:a:");
+  for(option = getopt(argc, argv, "qscdSihr:a:");
       option != -1;
-      option = getopt(argc, argv, "qsdSihr:a:"))
+      option = getopt(argc, argv, "qscdSihr:a:"))
     {
       switch(option)
 	{
+  case 'c':
+    flags |= CHECKSUM;
+    significant_bytes = 2;
+    break;
 	case 'h' :
 	  flags |= SRC_HOSTS;
 	  significant_bytes = 4;
@@ -169,7 +177,7 @@ int main(int argc, char **argv)
     }
   
   if(!(flags & QUIET)) 
-    printf("Packet Analysis Engine Version %s\nCopyright 2001, David Hoelzer\n",
+    printf("Packet Analysis Engine Version %s\nCopyright 2001, 2018, David Hoelzer\n",
 	 VERSION);
   // Check for required args:
   if(!flags || !(flags & GOT_SOURCE)) { usage(); }
@@ -183,7 +191,7 @@ int main(int argc, char **argv)
       exit(1);
     }  
   strcpy(the_filter, (flags & SEQ_NUMS ? "tcp and tcp[4:4] != 0" : 
-		      (flags & SRC_HOSTS ? 
+		      (flags & (SRC_HOSTS | CHECKSUM) ? 
 		       "ip " :
 		       (flags & (SRC_PORTS | DST_PORTS) ?
 			"(tcp or udp)" : 
@@ -204,8 +212,9 @@ int main(int argc, char **argv)
 	     (flags & SRC_PORTS ? "Source Ports" :
 	      (flags & DST_PORTS ? "Destination Ports" :
 	       (flags & IPIDS ? "IP ID Numbers" :
-		(flags & SEQ_NUMS ? "Sequence Numbers" : 
-		 (flags & SRC_HOSTS ? "Source Hosts" : "Payloads"))))));
+      		(flags & SEQ_NUMS ? "Sequence Numbers" : 
+            (flags & CHECKSUM ? "Checksums" : 
+      		    (flags & SRC_HOSTS ? "Source Hosts" : "Payloads")))))));
       printf("Processing...\n");
     }
   /* I can't find any documentation in the man page for libpcap explaining
@@ -269,7 +278,8 @@ pcap_handler analyze_packets(unsigned char *p, struct pcap_pkthdr *h, unsigned c
 	   (flags & IPIDS ? ip_header + 4 :
 	    (flags & SEQ_NUMS ? ip_header + header_length + 4 :
 	     (flags & SRC_HOSTS ? ip_header + 12 :
-	     data)))));
+        (flags & CHECKSUM ? ip_header + 10 :
+	     data))))));
   if((data + significant_bytes) > 
      (ip_header + ntohs(*((unsigned short int *)ip_header+1))))
     {
@@ -367,7 +377,7 @@ int get_header_length(unsigned char *packet)
 
 void usage()
 {
-  printf("Usage:\n\tpae -r source_file [-h|i|s|d|S] [-q]\n");
+  printf("Usage:\n\tpae -r source_file [-h|i|s|c|d|S] [-q] [-a <anomalosity value>]\n");
   exit(3);
 }
 
@@ -533,38 +543,39 @@ void print_results(struct root_struct *ptr)
     {
       bucket_reuse++;
       if(lasthash != ptr -> hash_value)
-	{
-	  hashes ++;
-	  lasthash = ptr -> hash_value;
-	  if(bmax < bucket_reuse) bmax = bucket_reuse;
-	  if(bmin > bucket_reuse) bmin = bucket_reuse;
-	  bucket_reuse = 0;
-	}
-      if(abs(ptr -> count - median) > ((std_dev * anomalosity) ))
-	{
-	  gt100 ++;
-	  if(!(flags & (SEQ_NUMS | IPIDS | SRC_PORTS | DST_PORTS | SRC_HOSTS)))
-	    {
-	      if(ptr->count > anomalosity){
-	      printf("+-------------------------------------------"\
-		     "--------------------------------------------+\n");
-	      for(x=0;x!=significant_bytes;x++)
-		{
-		  printf("%s%x ", (ptr->key[x] < 16 ? "0" : ""),
-			 (unsigned char)(ptr->key[x]));
-		}
-	      printf("\n");
-	      for(x=0;x!=significant_bytes;x++)
-		{
-		  printf("%c  ",(isprint(ptr->key[x])? ptr->key[x] : '.'));
-		}	
-	      printf(" -#: %d\n", ptr->count);
-	      }
-	    }else {
-	  printf("%d ", 
-		 ptr->count);
-	  }
-	  if((flags & DST_PORTS) | (flags & SRC_PORTS) | (flags &IPIDS))
+    	{
+    	  hashes ++;
+    	  lasthash = ptr -> hash_value;
+    	  if(bmax < bucket_reuse) bmax = bucket_reuse;
+    	  if(bmin > bucket_reuse) bmin = bucket_reuse;
+    	  bucket_reuse = 0;
+    	}
+//      if(abs(ptr -> count - median) > ((std_dev * anomalosity) ))
+    	{
+    	  gt100 ++;
+    	  if(!(flags & (SEQ_NUMS | IPIDS | SRC_PORTS | DST_PORTS | SRC_HOSTS | CHECKSUM)))
+    	 {
+    	      if(ptr->count > anomalosity){
+      	      printf("+-------------------------------------------"\
+      		     "--------------------------------------------+\n");
+      	      for(x=0;x!=significant_bytes;x++)
+          		{
+          		  printf("%s%x ", (ptr->key[x] < 16 ? "0" : ""),
+          			 (unsigned char)(ptr->key[x]));
+          		}
+      	      printf("\n");
+      	      for(x=0;x!=significant_bytes;x++)
+          		{
+          		  printf("%c  ",(isprint(ptr->key[x])? ptr->key[x] : '.'));
+          		}	
+      	      printf(" -#: %d\n", ptr->count);
+    	      }
+    	 } else {
+    	  printf("%d ", 
+    		ptr->count);
+    	 }
+      
+	  if((flags & DST_PORTS) | (flags & SRC_PORTS) | (flags &IPIDS) | (flags & CHECKSUM))
 	    {
 	      unsigned short int port;
 	      port = ntohs(((unsigned short int *)ptr->key)[0]);
@@ -583,8 +594,9 @@ void print_results(struct root_struct *ptr)
 	      for (x=0; x!= 4; x++)
 		{
 		  octet = *((unsigned char *)(ptr->key)+x);
-		  printf("%u%c\n", octet, (x == 3 ? ' ' : '.'));
+		  printf("%u%c", octet, (x == 3 ? ' ' : '.'));
 		}
+    printf("\n");
 	    }
 	}
       ptr = ptr->next_root;

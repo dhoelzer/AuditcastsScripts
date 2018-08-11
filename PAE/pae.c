@@ -23,11 +23,12 @@
  *  libpcap 0.4 (or higher) is required.
  */
 
-#define VERSION "0.5"
+#define VERSION "0.6"
 // Rev 0.1 - Initial Release
 // Rev 0.5 - Added checksum support
 //    We have developed a suspicion that there are checksums that will almost never appear
 //    and others that will be quite common.  Thought we'd add something to test this out.
+// Rev 0.6 - Added more detailed help as requested.
 
 
 #include<stdio.h>
@@ -377,7 +378,16 @@ int get_header_length(unsigned char *packet)
 
 void usage()
 {
-  printf("Usage:\n\tpae -r source_file [-h|i|s|c|d|S] [-q] [-a <anomalosity value>]\n");
+  printf("Usage:\n\tpae -r source_file [-h|i|s|c|d|S] [-q] [-a <anomalosity value>]\n\n");
+  printf("\t-h\tThis help\n");
+  printf("\t-i\tExtract and count occurrences of discrete IP ID values.\n");
+  printf("\t-s\tExtract and count occurrences of discrete source port numbers.\n");
+  printf("\t-c\tExtract and count occurrences of discrete IP checksum values.\n");
+  printf("\t-d\tExtract and count occurrences of discrete destination port numbers.\n");
+  printf("\t-S\tExtract and count occurrences of discrete TCP sequence numbers\n");
+  printf("\t-q\tSuppress internal hash table statistics information\n");
+  printf("\t-a\tConfigure an 'Anomalosity' value (how anomalous is this?) as a filter for values displayed.\n");
+  printf("\t\tIf given no extraction options, PAE will extract and count discrete occurrences of the first 32 bytes of data\n");
   exit(3);
 }
 
